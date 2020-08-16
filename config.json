@@ -1,12 +1,19 @@
 {
-  "name": "Demo Addon",
-  "version": "0.1",
-  "slug": "myaddon",
-  "description": "Add-on that prints 'Hello, world' to the log and exits",
+  "name": "Camera image classifier",
+  "version": "0.05",
+  "slug": "camera-classifier",
+  "description": "Detect if covers are on or off on the porch",
   "url": "https://github.com/issacg/hassio-addon-devcontainer",
-  "startup": "once",
+  "startup": "services",
   "boot": "manual",
-  "options": {},
-  "schema": {}, 
-  "arch": ["amd64", "armv7", "armhf", "i386" , "aarch64"]
+  "options": {
+    "rtsp_url": null
+    },
+  "schema": {
+    "rtsp_url": "url"
+    }, 
+  "arch": ["amd64", "armv7", "armhf", "i386" , "aarch64"],
+  "ports": {
+    "5000/tcp": 8000
+  }
 }

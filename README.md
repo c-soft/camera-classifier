@@ -1,53 +1,92 @@
-# Hass.io Add-on Devcontainer Template
+# Hass.io add-on for classification of images from RTSP feed of CCTV recorder
 
 ### Summary
 
-This is a templated to ease development of Hass.io add-ons inside of a VS Code [devcontainer](https://code.visualstudio.com/docs/remote/containers)
+This addon uses image recognition to tell if my garden furniture are covered or not. I use it to notify myself to cover them when the rain is coming.  
+
+
+#### How does it work
+
+The addon exposes "web API" (honestly, it's just one call) : `/covers-status`returning:
+- `unknown` on error,
+- `on` if the furniture is covered
+- `off` if they're not covered
+
+Then appropriate REST sensor configured in Home Assistant will get that information across.
+
+What happens underneath when api is triggered:
+1) Video stream is opened and one frame (image) is  taken.
+2) Image is classified using Keras image recognition model.
+3) As a result, `"on"` or `"off"` is returned
+
+Keras model is read from the disk on the start of the addon. The URL should produce RTSP steram of 1080p quality, even though for recognition it gets rescaled to 320x170px.
+
 
 ### Usage 
 
-Simply copy the contents of this repository to the base directory of the add-on you are developing.  Modify the files in the directory as needed.  
+WARNING: This is not a plug&play solution, please treat it more as inspiration. A lot of things may go wrong. You may waste lots of time getting this to work, fair warning.
 
-Your add-on will be appear in the `Local Add-ons` section of the Hass.io Add-On Store tab.
+Steps:
+1) Prepare your data and train your model. When you have your model ready, overwrite my model (files: `model-covers.json` and `model_covers_saved.h5`)
+2) Install modified addon on your hassio, most likely copy the dir containing it here: `\\hassio\addons`  (more info here: https://developers.home-assistant.io/docs/add-ons/tutorial/
+3) Configure the url to take snapshot of the RTSP video. This is the only required parameter. In my case this looks like this:
+`rtsp_url: 'rtsp://my-username:my-secret-password@192.168.2.15:554/cam/realmonitor?channel=4&subtype=0'`
+4) Configure sensor on the Homeassistant side:
 
-#### VS Code Tasks
+```
+sensor:
+  - platform: rest
+    resource: http://local-camera-classifier:5000/covers-status
+    name: Camera classifier
+```
+5) Enjoy! In my case, by using automation along the lines of:
 
-The following tasks are included for your convenience.
+```
+- id: 'notify_if_furniture_not_covered_before_rain'
+  alias: 'Notify when garden furniture outside is about to get rained on'
+  trigger:
+  - platform: time_pattern
+    minutes: /20
+    seconds: 0
+  condition:
+  - condition: and
+    conditions:
+    - condition: state
+      entity_id: sensor.terrace_seat_cover_status
+      state: 'off'
+    - condition: template
+      value_template: > 
+        {{ states('sensor.dark_sky_precip_probability_0h')|int > 30 
+        or states('sensor.dark_sky_precip_probability_1h')|int > 30
+        or states('sensor.dark_sky_precip_probability_2h')|int > 30
+        or states('sensor.dark_sky_precip_probability_3h')|int > 30}}
+  action:
+  - data_template:
+      message: 'Garden furniture uncovered and its about to rain, now: {{ states("sensor.dark_sky_precip_intensity_0h")}}mm/h, in 1 hour: {{ states("sensor.dark_sky_precip_intensity_1h")}}mm/h, in 2h: {{ states("sensor.dark_sky_precip_intensity_2h")}}mm/h, in 3h: {{ states("sensor.dark_sky_precip_intensity_3h")}}mm/h'
+      title: Rain
+    service: notify.all_phones
+``` 
+### Training the model
 
-- Start Hass.io
+I've attached code for training the model here:
 
-This task will download and run a Hass.io environment inside the container using the latest `dev` targets of Hass.io and Home Assistant.  It will be mapped to port 8123 (by default) on the host machine
+I'm sure it's unnecessarily clunky and it can be done in a better way, but it got the job done for me. 
 
-- Run Hass.io CLI - _Requires a running Hass.io_
+How to use it:
+1) Collect more than 1000 of each class of images. I have collected around 2-3k each and it gave me good results (>99% accuracy). It's important to take snapshosts in different time of day, weather, placements and so on.
+2) Put data in directory structure:
+```
+data_raw - contains 2 subdirs:
+> cover_off - containing images with cover off
+> cover_on - containing images with cover on
+```
 
-This task will open a Hass.io CLI window inside VS Code
+3) Run `crop_images.py`: this will do the following:
+-- Copy files from "data_raw" directory structure into "data", splitting them randomly in proportion into testing data and training data
+-- Crop all images, getting rid of parts of image where nothing happens.
 
-- Cleanup stale Hass.io environment
+4) Run `train-data.py` - this will train the model and save it on the disk
 
-This task will nuke the data stored by Hass.io (including the underlying Home Assistant).  Can be used to revert to a pristine state before starting Hass.io
+5) You can use `verify_dir.py` to run the model against all the files in your posetion, I've used it for debugging my model.
 
-### FAQ
-
-Q: How do I customize some-widget-or-another?
-
-A: There is almost no "black magic" going on here.  Make sure to read up on how devcontainers work from the [official website](https://code.visualstudio.com/docs/remote/containers)
-
-Q: I read the docs.  I still need help customizing some-widget-or-another!
-
-A: Come ask on [Discord](https://discordapp.com/invite/2Uath3J) in channel #hassio_dev
-
-Q: How do I develop more than one add-on in the same Hass.io instance?
-
-A: See [this issue](https://github.com/issacg/hassio-addon-devcontainer/issues/1).
-
-Q: Why are there 2 `Dockerfile`s?  
-
-A: The `.devcontainer\Dockerfile` is for your development environment.  The `Dockerfile` in the root directory is to build your Add-on.
-
-Q: I added `.devcontainer` to my `.dockerignore` and now things are broken.
-
-A: Don't.  The `.dockerignore` is shared by both Dockerfiles, and by adding `.devcontainer` to your `.dockerignore`, you will break things in the devcontainer.  Instead, use other means to avoid copying `.devcontainer` (and `.vscode` for that matter) in your "production" `Dockerfile`.
-
-Q: When installing my local add-on, I'm not seeing my latest changes.  Instead, I see the functionality of the last published version of my add-on.
-
-A: Make sure that you remove the `image` key from your `config.json`, else when "installing" the add-on, it will try to use the docker image, rather than building the add-on locally.
+Again, I'm sure there are better way of doing it, but hey - live & learn :)
